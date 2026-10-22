@@ -1,0 +1,9 @@
+{
+  "id_column": "message_id",
+  "columns": ["message_id", "action", "message_type", "reason", "confidence", "evidence_message_ids"],
+  "required": ["action", "message_type", "reason", "confidence", "evidence_message_ids"],
+  "enums": {"action": ["notify", "digest", "mute"]},
+  "numeric_ranges": {"confidence": [0, 1]},
+  "min_text_chars": {"reason": 30},
+  "case_sensitive_enums": true
+}
