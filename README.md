@@ -14,7 +14,7 @@ and to have every piece tested before the clock starts.
 | `okit/runner/checkpoint.py` | per-row checkpoint/resume with bounded concurrency; failures are retried on resume |
 | `okit/perception/image.py` | EXIF-orient, alpha-flatten, downscale, JPEG re-encode under size limits, content hash |
 | `okit/perception/audio.py` | OpenAI transcription, cached by audio hash |
-| `okit/safety/injection.py` | multilingual (en/fr/es/id/hi/Hinglish/de) injection heuristic → **flag only**; `wrap_untrusted()` fence |
+| `okit/safety/injection.py` | multilingual (en/fr/es/id/hi/Hinglish/de) injection + scam-lure heuristic → **flag only**; `wrap_untrusted()` fence. On the Sep '26 messages (n=215) it flags exactly the 2 advance-fee scams and none of the 213 others |
 | `okit/agent/loop.py` | bounded single-agent tool loop: step/tool-call/token/USD caps, validator feedback, deterministic fallback, per-row JSON trace |
 | `okit/evaluation/` | per-field accuracy, macro-F1, confusion, MAE, set-Jaccard; run-vs-run diff (fixed / broke) |
 | `okit/report/usage_report.py` | `usage.jsonl` → `usage_report.md` (per model, per purpose, per row) |
@@ -61,7 +61,7 @@ obs = await client.structured(Observation, model="gpt-4.1", messages=[Message.us
 CLIs:
 
 ```powershell
-python -m okit.evaluation score --pred out.csv --gold sample.csv --id id --cat action --num confidence:0.05 --set evidence_ids --out evaluation/score.md
+python -m okit.evaluation score --pred out.csv --gold sample.csv --id id --cat action --num confidence:0.05,amount:0.01:0.005 --set evidence_ids --out evaluation/score.md
 python -m okit.evaluation diff --a runs/a.csv --b runs/b.csv --gold sample.csv --id id --cat action
 python -m okit.report.usage_report --ledger runs/usage.jsonl --rows 250 --out usage_report.md
 python -m okit.submit.validate_output --spec output_spec.json --output output.csv --input test.csv

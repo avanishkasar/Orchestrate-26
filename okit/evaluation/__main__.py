@@ -1,6 +1,7 @@
 """CLI:
   python -m okit.evaluation score --pred out.csv --gold sample.csv --id id \
-      --cat action,message_type --num confidence:0.05 --set evidence_ids --out evaluation/score.md
+      --cat action,message_type --num confidence:0.05,amount:0.01:0.005 --set evidence_ids \
+      --out evaluation/score.md
   python -m okit.evaluation diff --a runA.csv --b runB.csv --gold sample.csv --id id --cat action
 """
 
@@ -23,8 +24,16 @@ from okit.evaluation.metrics import (
 def _specs(args: argparse.Namespace) -> list[FieldSpec]:
     specs = [FieldSpec(name=n, kind="categorical") for n in _split(args.cat)]
     for item in _split(args.num):
-        name, _, tol = item.partition(":")
-        specs.append(FieldSpec(name=name, kind="numeric", tolerance=float(tol or 0)))
+        name, _, tols = item.partition(":")
+        abs_tol, _, rel_tol = tols.partition(":")
+        specs.append(
+            FieldSpec(
+                name=name,
+                kind="numeric",
+                tolerance=float(abs_tol or 0),
+                rel_tolerance=float(rel_tol or 0),
+            )
+        )
     specs += [FieldSpec(name=n, kind="set") for n in _split(args.set)]
     if not specs:
         raise SystemExit("give at least one of --cat / --num / --set")
@@ -49,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name)
         p.add_argument("--id", required=True)
         p.add_argument("--cat")
-        p.add_argument("--num", help="name[:abs_tolerance],...")
+        p.add_argument("--num", help="name[:abs_tol[:rel_tol]],... e.g. amount:0.01:0.005")
         p.add_argument("--set")
         p.add_argument("--out")
         p.add_argument("--gold", required=name == "score")

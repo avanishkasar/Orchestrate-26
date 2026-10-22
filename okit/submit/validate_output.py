@@ -13,6 +13,9 @@ output_spec.json:
   "case_sensitive_enums": true
 }
 Exit code 0 = clean, 1 = errors. Warnings never fail the gate.
+
+Cross-field invariants (e.g. "0 <= amount_safe_to_pay <= requested_amount") are
+domain logic, so they are passed from Python as `checks`, not put in the JSON spec.
 """
 
 from __future__ import annotations
@@ -21,6 +24,7 @@ import argparse
 import csv
 import json
 from collections import Counter
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -54,7 +58,18 @@ def _read(path: Path) -> tuple[list[str], list[dict[str, str]]]:
         return list(reader.fieldnames or []), list(reader)
 
 
-def validate(spec: OutputSpec, output: Path, input_csv: Path | None) -> ValidationReport:
+MAX_PRINTED_ERRORS = 50
+
+# check(output_row, matching_input_row_or_None) -> list of problems for that row
+RowCheck = Callable[[dict[str, str], dict[str, str] | None], list[str]]
+
+
+def validate(
+    spec: OutputSpec,
+    output: Path,
+    input_csv: Path | None,
+    checks: Sequence[RowCheck] = (),
+) -> ValidationReport:
     rep = ValidationReport()
     try:
         header, rows = _read(output)
@@ -72,8 +87,10 @@ def validate(spec: OutputSpec, output: Path, input_csv: Path | None) -> Validati
     if any(not i.strip() for i in ids):
         rep.errors.append("blank id in output")
 
+    inputs: dict[str, dict[str, str]] = {}
     if input_csv is not None:
         _, in_rows = _read(input_csv)
+        inputs = {r.get(spec.id_column, ""): r for r in in_rows}
         want = [r.get(spec.id_column, "") for r in in_rows]
         missing, extra = set(want) - set(ids), set(ids) - set(want)
         if missing:
@@ -91,6 +108,8 @@ def validate(spec: OutputSpec, output: Path, input_csv: Path | None) -> Validati
     }
     for n, r in enumerate(rows, start=2):  # line 1 is the header
         rid = r.get(spec.id_column, f"line {n}")
+        for check in checks:
+            rep.errors.extend(f"{rid}: {msg}" for msg in check(r, inputs.get(rid)))
         for col in spec.required:
             if not (r.get(col) or "").strip():
                 rep.errors.append(f"{rid}: required column {col!r} is blank")
@@ -140,8 +159,14 @@ def main(argv: list[str] | None = None) -> int:
     rep = validate(spec, Path(args.output), Path(args.input) if args.input else None)
     for w in rep.warnings:
         print(f"WARN  {w}")
-    for e in rep.errors:
+    for e in rep.errors[:MAX_PRINTED_ERRORS]:
         print(f"ERROR {e}")
+    if len(rep.errors) > MAX_PRINTED_ERRORS:
+        # Group the rest by message shape ("<id>: <problem>") so a systemic bug reads as one line.
+        kinds = Counter(e.split(": ", 1)[-1].split("=")[0] for e in rep.errors)
+        print(f"... {len(rep.errors) - MAX_PRINTED_ERRORS} more. By kind:")
+        for kind, n in kinds.most_common(10):
+            print(f"  {n:>5}x {kind}")
     print("OK" if rep.ok else f"FAILED: {len(rep.errors)} error(s)")
     return 0 if rep.ok else 1
 

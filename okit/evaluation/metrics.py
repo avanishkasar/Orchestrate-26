@@ -2,7 +2,8 @@
 
 Field kinds:
   categorical  exact match after normalisation; accuracy, macro-F1, confusion matrix
-  numeric      MAE and share within an absolute tolerance
+  numeric      share within max(abs tolerance, rel tolerance * |gold|); MAE and median
+                 relative error (use the latter when rows mix currencies or scales)
   set          delimiter-separated IDs; exact-set accuracy and mean Jaccard
                  ("none"/empty both mean the empty set)
 """
@@ -11,6 +12,7 @@ from __future__ import annotations
 
 import csv
 import re
+import statistics
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Literal
@@ -25,6 +27,7 @@ class FieldSpec(BaseModel):
     name: str
     kind: FieldKind = "categorical"
     tolerance: float = 0.0
+    rel_tolerance: float = 0.0
     set_delimiters: str = r"[|,;\s]+"
 
 
@@ -35,6 +38,7 @@ class FieldScore(BaseModel):
     accuracy: float
     macro_f1: float | None = None
     mae: float | None = None
+    median_rel_err: float | None = None
     mean_jaccard: float | None = None
     confusion: dict[str, dict[str, int]] = Field(default_factory=dict)
     errors: list[tuple[str, str, str]] = Field(default_factory=list)  # (row_id, gold, pred)
@@ -87,7 +91,7 @@ def _match(spec: FieldSpec, gold: str | None, pred: str | None) -> bool:
         g, p = _to_float(gold), _to_float(pred)
         if g is None or p is None:
             return _norm(gold) == _norm(pred)
-        return abs(g - p) <= spec.tolerance
+        return abs(g - p) <= max(spec.tolerance, spec.rel_tolerance * abs(g))
     if spec.kind == "set":
         return _to_set(gold, spec.set_delimiters) == _to_set(pred, spec.set_delimiters)
     return _norm(gold) == _norm(pred)
@@ -120,6 +124,7 @@ def score(
         errors: list[tuple[str, str, str]] = []
         pairs: list[tuple[str, str]] = []
         abs_err: list[float] = []
+        rel_err: list[float] = []
         jac: list[float] = []
         for i in ids:
             g, p = gold[i].get(spec.name), pred[i].get(spec.name)
@@ -134,6 +139,7 @@ def score(
                 gf, pf = _to_float(g), _to_float(p)
                 if gf is not None and pf is not None:
                     abs_err.append(abs(gf - pf))
+                    rel_err.append(abs(gf - pf) / abs(gf) if gf else float(gf != pf))
             else:
                 gs, ps = _to_set(g, spec.set_delimiters), _to_set(p, spec.set_delimiters)
                 jac.append(1.0 if not gs and not ps else len(gs & ps) / len(gs | ps))
@@ -149,6 +155,7 @@ def score(
                 accuracy=right / n if n else 0.0,
                 macro_f1=macro_f1(pairs) if spec.kind == "categorical" and pairs else None,
                 mae=sum(abs_err) / len(abs_err) if abs_err else None,
+                median_rel_err=statistics.median(rel_err) if rel_err else None,
                 mean_jaccard=sum(jac) / len(jac) if jac else None,
                 confusion=dict(confusion),
                 errors=errors,
@@ -208,8 +215,8 @@ def render_score_md(report: ScoreReport, title: str = "Evaluation") -> str:
         lines.append(f"\nMissing predictions: {', '.join(report.missing_ids[:20])}")
     lines += [
         "",
-        "| field | kind | accuracy | macro-F1 | MAE | mean Jaccard |",
-        "|---|---|---|---|---|---|",
+        "| field | kind | accuracy | macro-F1 | MAE | median rel err | mean Jaccard |",
+        "|---|---|---|---|---|---|---|",
     ]
     for f in report.fields:
 
@@ -218,7 +225,7 @@ def render_score_md(report: ScoreReport, title: str = "Evaluation") -> str:
 
         lines.append(
             f"| {f.name} | {f.kind} | {fmt(f.accuracy, True)} | {fmt(f.macro_f1)} | "
-            f"{fmt(f.mae)} | {fmt(f.mean_jaccard)} |"
+            f"{fmt(f.mae)} | {fmt(f.median_rel_err, True)} | {fmt(f.mean_jaccard)} |"
         )
     for f in report.fields:
         if f.kind == "categorical" and f.confusion:

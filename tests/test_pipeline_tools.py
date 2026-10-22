@@ -175,3 +175,31 @@ def test_spec_json_roundtrip(tmp_path: Path) -> None:
     raw = {"id_column": "id", "columns": ["id"], "numeric_ranges": {"c": [0, 1]}}
     spec = OutputSpec.model_validate(json.loads(json.dumps(raw)))
     assert spec.numeric_ranges["c"] == (0, 1)
+
+
+def test_validate_runs_cross_field_checks(tmp_path: Path) -> None:
+    spec = OutputSpec(id_column="id", columns=["id", "safe"])
+    inp = _write_csv(tmp_path / "in.csv", [{"id": "1", "requested": "100"}])
+    out = _write_csv(tmp_path / "out.csv", [{"id": "1", "safe": "150"}])
+
+    def safe_le_requested(row: dict[str, str], src: dict[str, str] | None) -> list[str]:
+        if src is not None and float(row["safe"]) > float(src["requested"]):
+            return ["safe exceeds requested"]
+        return []
+
+    rep = validate(spec, out, inp, checks=[safe_le_requested])
+    assert rep.errors == ["1: safe exceeds requested"]
+
+
+def test_numeric_relative_tolerance(tmp_path: Path) -> None:
+    gold = _write_csv(
+        tmp_path / "g.csv", [{"id": "1", "amt": "15000000"}, {"id": "2", "amt": "250"}]
+    )
+    pred = _write_csv(
+        tmp_path / "p.csv", [{"id": "1", "amt": "15040000"}, {"id": "2", "amt": "251"}]
+    )
+    spec = FieldSpec(name="amt", kind="numeric", tolerance=0.01, rel_tolerance=0.005)
+    rep = score(read_csv(pred, "id"), read_csv(gold, "id"), [spec])
+    # 15.00M vs 15.04M is within 0.5%; 250 vs 251 is 0.4% so also within.
+    assert rep.fields[0].accuracy == 1.0
+    assert rep.fields[0].median_rel_err is not None and rep.fields[0].median_rel_err < 0.005
